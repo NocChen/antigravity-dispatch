@@ -13,6 +13,7 @@ Python 3 stdlib only. No configuration.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -284,6 +285,39 @@ def board_append(sa, code, event, note):
     line = "%s | %s | %s | %s\n" % (time.strftime("%Y-%m-%d %H:%M"), code, event, note)
     with board.open("a", encoding="utf-8") as f:
         f.write(line)
+    return line
+
+
+# ------------------------------------------------------- dispatch manifest
+#
+# Written into the task directory at dispatch time so `audit` can later answer
+# three questions the transcript cannot be trusted on: which conversation this
+# task belongs to, whether the agent rewrote its own brief, and whether it
+# stopped without signing off. All three have happened.
+
+MANIFEST = ".dispatch.json"
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+
+
+def write_manifest(sa, task, cid, model, pid):
+    (sa / task / MANIFEST).write_text(json.dumps({
+        "conversationId": cid, "model": model, "projectId": pid,
+        "dispatchedAt": time.strftime("%Y-%m-%d %H:%M"),
+        "handoffSha256": digest(sa / task / "HANDOFF.md"),
+    }, indent=2) + "\n", encoding="utf-8")
+
+
+def read_manifest(sa, task):
+    p = sa / task / MANIFEST
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
     return line.strip()
 
 
@@ -333,7 +367,34 @@ Format: `YYYY-MM-DD HH:MM | {code} | event | note`
   under "Open decisions" along with the default you are proceeding on. Do not stall.
 - Do not infer from code alone: run pages in a browser and screenshot them, connect to
   the database and run the queries, paste the grep output.
-- Report honestly. If it is not done, say it is not done. If a test failed, paste the output."""
+- Report honestly. If it is not done, say it is not done. If a test failed, paste the output.
+
+**The brief is not yours to edit.** `HANDOFF.md` belongs to whoever wrote it. Never
+rewrite it, summarize it, or mark it complete — your completion report goes in
+`PROGRESS.md`. If the brief is wrong or impossible, say so in `PROGRESS.md` and on the
+board, and leave the brief itself untouched.
+
+**Before you call something a defect, prove that it is one.** A failing assertion is a
+bug in your test until you have read the actual contract — the route handler, the
+schema, the type definition — and can cite the line saying the behavior should differ.
+An API that correctly rejects your bad input is not broken. A response shape that is not
+what you guessed is your guess being wrong. Every defect you report must name the source
+location that establishes the expected behavior; if you cannot find one, report it as a
+question, not a finding. A wrong defect costs the next person more than no defect would.
+
+**Report coverage as a fraction, never as an adjective.** If the brief sets out a matrix
+— pages by breakpoints by languages, endpoints, files, records — state how many of each
+you actually covered and list by name what you did not. "Full sweep completed" on top of
+a 2-out-of-30 sample is precisely the failure this rule exists to prevent.
+
+**Before you stop:**
+- Shut down every process you started — dev servers, watchers, tunnels, REPLs. A server
+  left running will collide with the next agent's, and on a single-writer database that
+  means two processes writing the same file.
+- Clean up your scratch files. One-off scripts belong wherever this project keeps its
+  tooling, never the repository root, and throwaway artifacts should be deleted.
+- Append your `done` line to the board. A task whose conversation has gone idle without
+  one reads as a crash, and someone has to reconstruct what you did and whether it is safe."""
 
 PROMPT_ZH = """你是本项目的子代理，负责任务「{task}」（编号 {code}）。
 
@@ -354,7 +415,29 @@ PROMPT_ZH = """你是本项目的子代理，负责任务「{task}」（编号 {
 - 被依赖的话第一天就发布接口契约，不要等实现做完。契约发布后要改，必须在看板写一行 ⚠️契约变更。
 - 被阻塞时先做不依赖这个答案的部分，把问题写进「待决策」并说明你按哪个默认往下做，不要停在那里等。
 - 不许只凭代码推断：页面要真跑起来截图，数据库要真连上跑，外链合规要贴 grep 输出。
-- 诚实报告。没做完就说没做完，测试没过就贴输出。"""
+- 诚实报告。没做完就说没做完，测试没过就贴输出。
+
+**任务书不是你的文件。** `HANDOFF.md` 属于写它的人。**不许重写、不许改写成完工报告、
+不许标记为已完成** —— 你的完工报告写进 `PROGRESS.md`。任务书本身有错或做不到，
+写进 `PROGRESS.md` 和看板说明情况，**原文不要动**。
+
+**下「这是缺陷」的结论之前，先证明它是缺陷。** 断言失败，在你读过真正的契约
+（路由处理函数、schema、类型定义）并能引用出「行为本该不同」的那一行之前，
+**默认是你的测试写错了**。接口正确拒绝了非法入参，不是接口坏了；
+返回结构和你猜的不一样，是你猜错了。**每条缺陷都必须给出确立预期行为的源码位置**；
+找不到就按「疑问」报，不要按「发现」报。**报错的缺陷比不报缺陷更浪费下一个人的时间。**
+
+**覆盖率用分数报，不要用形容词。** 任务书列了矩阵（页面 × 断点 × 语种、接口、文件、记录）的，
+就说清每一维**实际覆盖了几个／共几个**，并**逐个点名没覆盖的**。
+在 30 个里抽了 2 个却写「已全面巡检」，正是本条规则要防的事。
+
+**收工前必须做完这三件：**
+- **关掉你起的所有进程** —— 开发服务器、watcher、隧道、REPL。你留着的服务器会和下一个
+  代理起的撞车；数据库是单进程写入的话，就是两个进程同时写同一个文件。
+- **清掉你的临时文件。** 一次性脚本放到本项目放工具的地方，**绝不留在仓库根目录**，
+  用完即弃的产物要删掉。
+- **往看板追加「收工」那一行。** 会话已经空闲却没有收工行，读起来就是崩溃退出，
+  别人得从头推断你做了什么、能不能用。"""
 
 GUIDE_LINE = {"en": "2. `%s` — file ownership, interface contracts, status board rules\n",
               "zh": "2. `%s` —— 文件所有权、接口契约、状态看板规则\n"}
@@ -458,6 +541,10 @@ def cmd_projects(a):
 
 def cmd_workspace(a):
     sa = find_subagents(a.subagents)
+    try:
+        live = summaries()
+    except Exception:
+        live = {}
     board, guide = pick(sa, BOARD_NAMES), pick(sa, GUIDE_NAMES)
     print("SubAgents    : %s" % sa)
     print("convention   : %s" % workspace_lang(sa))
@@ -478,7 +565,137 @@ def cmd_workspace(a):
             state = ("PROGRESS empty" if any(x in txt for x in EMPTY_PROGRESS)
                      else "delivered" if any(x in txt for x in DELIVERED)
                      else "in progress")
-        print("  %-30s %-12s %s" % (d.name, task_code(d.name), state))
+        # "in progress" is ambiguous on its own: still working, or stopped without
+        # saying so? Only the live conversation status separates the two, and the
+        # difference decides whether a human needs to step in right now.
+        flag = ""
+        if state == "in progress":
+            man = read_manifest(sa, d.name)
+            s = live.get(man.get("conversationId")) if man else None
+            if s is not None and s.get("status") not in BUSY:
+                flag = "  <- STOPPED, not signed off (run: audit)"
+        print("  %-30s %-12s %s%s" % (d.name, task_code(d.name), state, flag))
+
+
+DONE_WORDS = ("done", "收工", "finished", "complete")
+
+
+def _signed_off(board_text, code):
+    """True if the board carries a done/收工 line for this task id."""
+    for line in board_text.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 3 and parts[1] == code and any(w in parts[2].lower() for w in DONE_WORDS):
+            return True
+    return False
+
+
+def _root_strays(paths):
+    """Untracked files sitting at the top level of each git repo covering the workspace.
+
+    Agents drop one-off patch scripts in the repository root; the convention is that
+    tooling lives in the project's own scripts directory. Untracked-and-at-the-root is
+    the cheap signal for that, and it never touches anything git already knows about.
+    """
+    out = {}
+    for w in paths:
+        try:
+            top = subprocess.run(["git", "-C", w, "rev-parse", "--show-toplevel"],
+                                 capture_output=True, text=True, timeout=10)
+            if top.returncode:
+                continue
+            root = top.stdout.strip()
+            r = subprocess.run(["git", "-C", root, "ls-files", "--others",
+                                "--exclude-standard", "--directory"],
+                               capture_output=True, text=True, timeout=20)
+            # Files only. A stray directory at the root is usually the notes vault or a
+            # build output; the failure mode this catches is loose one-off scripts.
+            files = [f for f in r.stdout.splitlines() if f and not f.endswith("/")]
+            if files:
+                out[root] = files
+        except Exception:
+            continue
+    return out
+
+
+def cmd_audit(a):
+    """Cross-check what agents claim against what the workspace and the API show.
+
+    Everything here exists because a transcript said one thing and the disk said
+    another. Read this before believing a delivered status.
+    """
+    sa = find_subagents(a.subagents)
+    board_text = ""
+    bp = sa / pick(sa, BOARD_NAMES)
+    if bp.exists():
+        board_text = bp.read_text(encoding="utf-8", errors="replace")
+
+    live = {}
+    try:
+        live = summaries()
+    except Exception:
+        print("note: Agent Manager unreachable — conversation status unavailable.\n",
+              file=sys.stderr)
+
+    findings = 0
+    print("audit: %s\n" % sa)
+    for d in sorted(p for p in sa.iterdir()
+                    if p.is_dir() and not p.name.startswith((".", "_"))):
+        man = read_manifest(sa, d.name)
+        if not man:
+            continue  # never dispatched through this tool; nothing to check against
+        code, notes = task_code(d.name), []
+
+        cid = man.get("conversationId")
+        s = live.get(cid) if cid else None
+        running = s.get("status") in BUSY if s else None
+        pr = d / "PROGRESS.md"
+        txt = pr.read_text(encoding="utf-8", errors="replace") if pr.exists() else ""
+        delivered = any(x in txt for x in DELIVERED)
+        empty = (not txt) or any(x in txt for x in EMPTY_PROGRESS)
+
+        # A conversation the Agent Manager no longer knows about (purged, or the app was
+        # restarted) is not evidence of work still happening — treat it like a stopped one
+        # rather than skipping the checks, which would let a dead task look healthy.
+        ended = running is False or (running is None and not delivered)
+        where = "conversation is idle" if running is False else "conversation status unknown"
+
+        if ended and not delivered:
+            notes.append("STOPPED WITHOUT SIGN-OFF — %s but PROGRESS.md does not say "
+                         "delivered. It may have died mid-task; verify the work on disk "
+                         "before trusting any of it." % where)
+        if ended and not _signed_off(board_text, code):
+            notes.append("no done/收工 line on the board")
+        if ended and empty:
+            notes.append("PROGRESS.md is still the empty template — nothing was logged at all")
+
+        before, now = man.get("handoffSha256"), digest(d / "HANDOFF.md")
+        if before and now and before != now:
+            notes.append("HANDOFF.md CHANGED SINCE DISPATCH — the brief is the human's "
+                         "file and agents must not edit it. Recover it with: "
+                         "git checkout -- '%s'" % (d / "HANDOFF.md"))
+
+        if notes:
+            findings += len(notes)
+            print("  %s (%s)" % (d.name, "running" if running else "idle" if running is False else "unknown"))
+            for n in notes:
+                print("    - %s" % n)
+            print()
+
+    roots = [str(sa)]
+    if a.project:
+        roots += project_paths(resolve_project(a.project))
+    strays = _root_strays(dict.fromkeys(roots))
+    for root, files in strays.items():
+        findings += 1
+        print("  untracked files at the repo root of %s:" % root)
+        print("    %s" % "  ".join(files))
+        print("    One-off scripts belong in the project's tooling directory, not the root.\n")
+
+    if not findings:
+        print("  nothing flagged.\n")
+    print("Reminder: this checks bookkeeping, not correctness. A clean audit does not\n"
+          "mean the work is right — re-verify reported defects against the actual\n"
+          "contract, and re-run the project's own gates yourself.")
 
 
 def cmd_new_task(a):
@@ -547,6 +764,7 @@ def cmd_dispatch(a):
         # ties a conversation id back to a task folder.
         board_append(sa, a.by, "dispatched" if workspace_lang(sa) == "en" else "派发",
                      "%s (Antigravity %s, conversation %s)" % (a.task, a.model, cid))
+        write_manifest(sa, a.task, cid, a.model, pid)
         covered = [w for w in project_paths(pid)
                    if str(sa).startswith(os.path.realpath(w))]
         if not covered:
@@ -656,6 +874,11 @@ def main():
     ws = sub.add_parser("workspace", help="show the SubAgents layout and per-task state")
     ws.add_argument("--subagents")
     ws.set_defaults(fn=cmd_workspace)
+
+    au = sub.add_parser("audit", help="cross-check agent claims against the workspace and live status")
+    au.add_argument("--subagents")
+    au.add_argument("--project", help="also scan this project's repo roots for stray files")
+    au.set_defaults(fn=cmd_audit)
 
     n = sub.add_parser("new-task", help="copy _TEMPLATE into a new task directory")
     n.add_argument("task", help="id-task-name, e.g. W2-A-search-ranking")

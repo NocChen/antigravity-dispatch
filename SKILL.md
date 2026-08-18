@@ -134,7 +134,43 @@ working.
 transcript.** Transcripts overstate. Agents cite test scripts that were never
 written to disk, and screenshots that came out byte-identical because nothing
 rendered. `$AGD workspace` flags tasks whose `PROGRESS.md` is still an empty
-template.
+template, and marks a task `STOPPED, not signed off` when its conversation has
+gone idle while the log still reads in-progress.
+
+## Reviewing what came back
+
+```bash
+$AGD audit                      # bookkeeping cross-check over every dispatched task
+$AGD audit --project MedTour    # also scan that project's repo roots for stray files
+```
+
+`audit` compares the manifest written at dispatch against the workspace now, and
+reports what it cannot reconcile:
+
+- **Stopped without sign-off** — the conversation ended but `PROGRESS.md` never
+  said delivered. Usually a mid-task death, and the half-finished edits are still
+  on disk.
+- **`HANDOFF.md` changed since dispatch** — an agent rewrote its own brief,
+  typically replacing it with a completion report. Recover it from git.
+- **No `done` line on the board**, or a `PROGRESS.md` still on the template.
+- **Untracked files at a repo root** — one-off patch scripts dropped where the
+  project's tooling convention says they don't belong.
+
+A clean audit means the paperwork is consistent, nothing more. These four checks
+exist because each one silently went wrong. What audit cannot check, you have to:
+
+- **Re-verify every reported defect before acting on it.** In one review, three of
+  four reported "blockers" were wrong: two were assertions written against a
+  guessed response shape, and the third was an endpoint correctly rejecting bad
+  input. Read the route or schema and confirm the expected behavior before you
+  schedule a fix — a false defect costs more than a missed one.
+- **Check claimed coverage against delivered artifacts.** "Full sweep" alongside
+  three screenshots of two pages is not a full sweep.
+- **Re-run the project's own gates yourself**, rather than trusting a report that
+  says they passed.
+- **Check for processes the agent left running** — a dev server outliving its
+  agent will collide with the next one, and on a single-writer database that means
+  two processes writing the same file.
 
 ## Things to get right
 
@@ -148,4 +184,8 @@ template.
   conversation. With `--task`, the `HANDOFF.md` carries the context — which is
   exactly why it must be filled in before dispatch.
 - **Don't write another agent's files** on the user's behalf either. If a task's
-  `PROGRESS.md` needs correcting, note it on the board rather than editing it.
+  `PROGRESS.md` needs correcting, note it on the board rather than editing it —
+  record your own conclusions in a review note you own, and say which of the
+  agent's claims it supersedes.
+- **Believe the disk over the report.** Every check in `audit` exists because a
+  confident write-up did not match what was actually there.

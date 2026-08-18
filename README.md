@@ -1,12 +1,13 @@
-# agdispatch
+# agdispatch — a CLI for Google Antigravity's background coding agents
 
-Dispatch background coding agents to **Google Antigravity** from the command line —
-or from Claude Code, as a skill.
+Dispatch, monitor and audit **Google Antigravity** AI coding agents from the
+command line — or from **Claude Code**, as a skill.
 
 Antigravity's Agent Manager ships an official-but-undocumented `agentapi` command
 and a local RPC service. `agdispatch` wraps both into one tool: start agents, poll
 them, read their transcripts, and optionally run them inside a coworking
-convention that leaves a paper trail a human can actually read.
+convention that leaves a paper trail a human can actually read — then cross-check
+what they claim against what they actually left on disk.
 
 ```bash
 $ agdispatch dispatch --wait "Add retry-with-backoff to the fetch helper in src/api.ts"
@@ -14,6 +15,11 @@ $ agdispatch dispatch --wait "Add retry-with-backoff to the fetch helper in src/
 
 No configuration, no API keys, no dependencies beyond Python 3. It talks to the
 Antigravity you already have running and signed in.
+
+**Contents** — [How it works](#how-it-works) · [Install](#install) ·
+[Usage](#usage) · [The SubAgents convention](#the-subagents-convention) ·
+[Reviewing what came back](#reviewing-what-came-back) · [Commands](#commands) ·
+[Caveats](#caveats) · [FAQ](#faq)
 
 ---
 
@@ -190,7 +196,54 @@ tasks:
 ```
 
 `PROGRESS empty` means an agent finished without writing its log — the work may
-exist, but the handoff doesn't.
+exist, but the handoff doesn't. `STOPPED, not signed off` means the conversation
+has gone idle while the log still claims work in progress: usually a mid-task
+death, with half-finished edits still sitting in the tree.
+
+---
+
+## Reviewing what came back
+
+The hard part of running background agents isn't starting them. It's working out
+which parts of a confident report are true.
+
+```bash
+agdispatch audit                     # bookkeeping cross-check over every dispatched task
+agdispatch audit --project my-app    # also scan that project's repo roots for stray files
+```
+
+`dispatch --task` records a small manifest in the task folder — conversation id,
+model, timestamp, and a checksum of the brief. `audit` compares that against the
+workspace as it stands now and reports what it can't reconcile:
+
+| Finding | What it means |
+|---|---|
+| **Stopped without sign-off** | The conversation ended but `PROGRESS.md` never said delivered. Usually a mid-task death; the partial work is still on disk |
+| **`HANDOFF.md` changed since dispatch** | An agent rewrote its own brief — typically replacing it with a completion report. Recover it from git |
+| **No `done` line on the board** | The task ended without the entry the next person reads |
+| **Untracked files at a repo root** | One-off patch scripts dropped where your tooling convention says they don't go |
+
+Each of those checks exists because it silently went wrong in a real run.
+
+**A clean audit means the paperwork is consistent — nothing more.** What it
+can't check, you still have to:
+
+- **Re-verify every reported defect before acting on it.** In one review, three of
+  four reported "blockers" were wrong: two were assertions written against a
+  guessed response shape, and the third was an endpoint correctly rejecting bad
+  input. A false defect costs more than a missed one — read the route or the
+  schema and confirm the expected behavior before scheduling a fix.
+- **Check claimed coverage against delivered artifacts.** "Full sweep" next to
+  three screenshots of two pages is not a full sweep.
+- **Re-run your own test gates**, rather than trusting a report that says they passed.
+- **Look for processes the agent left running.** A dev server outliving its agent
+  collides with the next one — and against a single-writer database, that means
+  two processes writing the same file.
+
+The composed prompt pushes back on the same failures from the agent's side: the
+brief is read-only, a failing assertion is a bug in your test until the contract
+proves otherwise, coverage is reported as a fraction rather than an adjective,
+and processes and scratch files get cleaned up before sign-off.
 
 ### Why the convention is shaped this way
 
@@ -226,6 +279,7 @@ it with `--lang en|zh`.
 | `projects` | list Antigravity projects and their workspace paths |
 | `dispatch` | start a new agent |
 | `workspace` | show the SubAgents layout and per-task state |
+| `audit` | cross-check agent claims against the workspace and live status |
 | `new-task` | copy `_TEMPLATE` into a new task directory |
 | `board` | append one line to the status board |
 | `send` | send a follow-up message to a conversation |
@@ -243,6 +297,36 @@ it with `--lang en|zh`.
   session limits mid-task.
 - **Undocumented surface.** `agentapi` and the RPC service are internal to
   Antigravity. This works today; a future release may change it.
+
+---
+
+## FAQ
+
+**Can I run Google Antigravity agents from the terminal?**
+Yes — that's what this is. The Agent Manager hosts a local API; `agdispatch`
+discovers it and drives it, so you can start and monitor agents without the GUI.
+
+**Can I run several Antigravity agents in parallel?**
+Yes. Give each one its own task folder and declare file ownership in each brief,
+so two agents never write the same file. See
+[the SubAgents convention](#the-subagents-convention).
+
+**How do I use Antigravity from Claude Code?**
+Copy `SKILL.md` and `agdispatch.py` into `~/.claude/skills/antigravity-dispatch/`.
+Claude Code loads it as a skill and can dispatch, monitor and audit agents for you.
+
+**How do I know whether an agent actually did the work?**
+Read `PROGRESS.md` and the repository, not the transcript — transcripts overstate.
+Run [`agdispatch audit`](#reviewing-what-came-back) for the bookkeeping check, then
+re-verify any reported defect against the real contract before acting on it.
+
+**Does it need an API key?**
+No. It uses the Antigravity app you already have running and signed in. No keys,
+no config files, no third-party dependencies — Python 3 standard library only.
+
+**Does it work on Linux or Windows?**
+Not yet. Endpoint discovery shells out to `ps` and `lsof`; the rest is portable.
+Patches welcome.
 
 ## License
 
